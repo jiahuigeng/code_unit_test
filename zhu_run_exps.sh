@@ -1,0 +1,10 @@
+python open_unit_test_generation.py  --lang Python --model codegemma
+python open_unit_test_generation.py  --lang Python --model qwen
+python open_unit_test_generation.py  --lang Python --model deepseek7b
+python open_unit_test_generation.py  --lang Python --model llama
+python open_unit_test_generation.py  --lang Python --model deepseek8b
+python open_unit_test_generation.py  --lang Java --model codegemma
+python open_unit_test_generation.py  --lang Java --model qwen
+python open_unit_test_generation.py  --lang Java --model deepseek7b
+python open_unit_test_generation.py  --lang Java --model llama
+python open_unit_test_generation.py  --lang Java --model deepseek8b

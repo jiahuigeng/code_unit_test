@@ -1,0 +1,10 @@
+python open_unit_test_generation.py  --lang Python --model qwencoder3b
+python open_unit_test_generation.py  --lang Python --model qwencoder7b
+python open_unit_test_generation.py  --lang Python --model codellama
+python open_unit_test_generation.py  --lang Python --model starcoder3b
+python open_unit_test_generation.py  --lang Python --model starcoder7b
+python open_unit_test_generation.py  --lang Java --model qwencoder3b
+python open_unit_test_generation.py  --lang Java --model qwencoder7b
+python open_unit_test_generation.py  --lang Java --model codellama
+python open_unit_test_generation.py  --lang Java --model starcoder3b
+python open_unit_test_generation.py  --lang Java --model starcoder7b
