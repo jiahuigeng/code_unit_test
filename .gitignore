@@ -9,3 +9,9 @@ __pycache__/
 prompt.txt
 python_test_generation.py
 example_generation_gpt4.txt
+new_utils.py
+thesis_dataset.tar.gz
+thesis_dataset/
+tmp_description/
+python_test_generation_new.py
+data_checker.py

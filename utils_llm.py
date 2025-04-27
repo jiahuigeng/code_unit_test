@@ -1,5 +1,5 @@
-from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
-from transformers import AutoModel, AutoTokenizer
+# from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
+# from transformers import AutoModel, AutoTokenizer
 from api_resource import *
 import torch
 import torchvision.transforms as T
@@ -16,6 +16,8 @@ import base64
 import io
 import time
 import os
+from typing import List, Dict, Any, Union, Optional
+import base64
 
 def load_image(image_path):
     """Load an image from the given path and return it as a base64-encoded string."""
@@ -24,9 +26,9 @@ def load_image(image_path):
         img.save(buffered, format=img.format)
         return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-def get_gpt_model():
+def get_gpt_model(model_name):
     model = OpenAI(api_key=openai_api)
-    return model
+    return NamedModel(model, model_name)
 
 # def prompt_gpt4o(model, prompt, image_path=None):
 #     """
@@ -133,8 +135,8 @@ def prompt_gpt4o(model, prompt, image_path=None, demonstrations=None):
         messages.append({"role": "user", "content": final_user_content})
 
         # 3. Generate response from the model
-        response = model.chat.completions.create(
-            model="gpt-4o-mini",
+        response = model.model.chat.completions.create(
+            model=model.model_name,
             messages=messages,
             temperature=0,
             max_tokens=4096,
@@ -146,17 +148,33 @@ def prompt_gpt4o(model, prompt, image_path=None, demonstrations=None):
         raise RuntimeError(f"An error occurred while querying the GPT-4o model: {e}")
 
 
+class NamedModel:
+    def __init__(self, model, model_name):
+        self.model = model
+        self.model_name = model_name
 
-def get_gemini_model():
+def get_gemini_model(model_name='gemini-2.0-flash'):
     genai.configure(api_key=gemini_api)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    return model
+    model = genai.GenerativeModel(model_name)
+    return NamedModel(model, model_name)
 
 # def get_gemini_model():
 #     genai.configure(api_key=gemini_api)
 #     client = genai.GenerativeModel('gemini-1.5-flash')
 #     return client
 
+def get_claude(model_name="claude-3-haiku") -> anthropic.Anthropic:
+    """
+    创建并返回一个Claude API客户端实例。
+
+    参数:
+        api_key (str): Anthropic API密钥
+
+    返回:
+        anthropic.Anthropic: Claude API客户端实例
+    """
+    model = anthropic.Anthropic(api_key=anthropic_api_key)
+    return NamedModel(model, model_name)
 def prompt_gemini(client, prompt, image_path=None, demonstrations=None):
     """
     Prompt Gemini with optional in-context learning using demonstrations.
@@ -216,14 +234,76 @@ def prompt_gemini(client, prompt, image_path=None, demonstrations=None):
 
     # Generate the response
     try:
-        response = client.generate_content(content_parts, generation_config={"temperature": 0.0})
+        response = client.model.generate_content(content_parts, generation_config={"temperature": 0.0})
         return response.text
     except Exception as e:
         return f"Error generating response: {str(e)}"
 
+
+def prompt_claude(client,
+                  prompt: str,
+                  image_path: Optional[str] = None,
+                  demonstrations: Optional[List[Dict[str, str]]] = None,
+                  model: str = "claude-3-haiku-20240307") -> str:
+    """
+    向Claude发送提示并获取回复。
+
+    参数:
+        client (anthropic.Anthropic): Claude API客户端实例
+        prompt (str): 发送给Claude的提示文本
+        image_path (str, optional): 可选的图片文件路径，用于多模态输入
+        demonstrations (List[Dict[str, str]], optional): 用于少样本学习的示例列表
+        model (str): 要使用的Claude模型，默认为"claude-3-haiku-20240307"
+
+    返回:
+        str: Claude的回复文本
+    """
+    messages = []
+
+    # 添加少样本学习的示例（如果提供）
+    if demonstrations:
+        for demo in demonstrations:
+            if "user" in demo:
+                messages.append({"role": "user", "content": demo["user"]})
+            if "assistant" in demo:
+                messages.append({"role": "assistant", "content": demo["assistant"]})
+
+    # 准备用户消息内容
+    content = []
+
+    # 添加文本提示
+    content.append({"type": "text", "text": prompt})
+
+    # 如果提供了图片，添加图片
+    if image_path:
+        with open(image_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": f"image/{image_path.split('.')[-1]}",
+                "data": base64_image
+            }
+        })
+
+    # 添加用户消息
+    messages.append({"role": "user", "content": content})
+
+    # 调用API获取回复
+    response = client.model.messages.create(
+        model=model,
+        messages=messages,
+        max_tokens=4096
+    )
+
+    # 返回回复文本
+    return response.content[0].text
+
 # def prompt_gemini(client, prompt, image_path=None, demonstrations=None):
 #     """
-#     Generates a response from the Gemini model using optional image input and few-shot demonstrations.
+#     Generates a response from the Gemini model using optional `image input and few-shot demonstrations.
 #
 #     Args:
 #         client: The Gemini model client.
@@ -280,18 +360,24 @@ def prompt_gemini(client, prompt, image_path=None, demonstrations=None):
 
 def get_commercial_model(model_name):
     model_map = {
-        "gpt4o": get_gpt_model,
-        "gemini": get_gemini_model,
+        "gpt-4o": get_gpt_model,
+        "gpt-4o-mini": get_gpt_model,
+        "gemini-2.0-flash": get_gemini_model,
+        "claude-3-haiku": get_claude,
     }
+
+
     if model_name in model_map:
-        return model_map[model_name]()
+        return model_map[model_name](model_name)
     raise ValueError(f"Unknown model name: {model_name}")
 
 def prompt_commercial_model(client, model_name, prompt, image_id, demonstrations=None):
     # print(prompt)
     prompt_map = {
-        "gpt4o": prompt_gpt4o,
-        "gemini": prompt_gemini,
+        "gpt-4o": prompt_gpt4o,
+        "gpt-4o-mini": prompt_gpt4o,
+        "gemini-2.0-flash": prompt_gemini,
+        "claude-3-haiku": prompt_claude,
     }
     if model_name in prompt_map:
         try:
@@ -305,22 +391,31 @@ def prompt_commercial_model(client, model_name, prompt, image_id, demonstrations
 
 
 if __name__ == "__main__":
-    gpt_client = get_gpt_model()
+    gpt_client = get_gpt_model("gpt-4o-mini")
     gemini_client = get_gemini_model()
+    claude_client = get_claude()
     # image_path = "demo.jpeg"
     # text_prompt = "describe the image"
     text_prompt = "where is the capital of China?"
 
-    # Process and get response
-    response = prompt_gpt4o(gpt_client, text_prompt, "",)
+    # # Process and get response
+    # response = prompt_gpt4o(gpt_client, text_prompt, "",)
 
     # Display the response
-    print("\ngpt-4o Response:")
-    print(response)
-
+    # print("\ngpt-4o Response:")
+    # print(response)
     # Process and get response
-    response = prompt_gemini(gemini_client, text_prompt, "",)
+    # response = prompt_gemini(gemini_client, text_prompt, "",)
+    #
+    # # Display the response
+    # print("\nGemini Response:")
+    # print(response)
 
     # Display the response
-    print("\nGemini Response:")
+    # response = prompt_gemini(claude_client, text_prompt, "", )
+    # print("\nClaude Response:")
+    # print(response)
+
+    response = prompt_claude(claude_client, text_prompt, "")
+    print("\nClaude Response:")
     print(response)
