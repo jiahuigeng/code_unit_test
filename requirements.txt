@@ -5,3 +5,8 @@ safetensors
 vllm
 pandas
 openpyxl
+bitsandbytes
+git+https://github.com/huggingface/transformers.git@main
+sentencepiece
+hf_transfer
+huggingface_hub
