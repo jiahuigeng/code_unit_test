@@ -15,3 +15,4 @@ thesis_dataset/
 tmp_description/
 python_test_generation_new.py
 data_checker.py
+datasets-old/
