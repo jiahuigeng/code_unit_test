@@ -89,11 +89,51 @@ Output instructions:
 """
     return prompt
 
+
+def get_js_prompt_unit_test_generation(description, code):
+    prompt = f"""
+Generate comprehensive unit tests for the given code using the provided problem description.
+
+Requirements:
+- Create exactly 10 unit tests.
+- Each test must be written as a separate test function.
+
+Inputs:
+- PROBLEM DESCRIPTION: 
+{description}
+- CODE TO TEST: 
+{code}
+
+Guidelines for the tests:
+- Use jest library.
+- Use the timeout value of 10000ms (10 seconds) for each test.
+- You are given a function called runTestWithInput which gets the code's output using test input and it will be implemented later. For now, add this function to test code exactly like this as a helper function:
+function runTestWithInput(inputData) {{
+    return 'This function will be implemented later.';
+}}
+- Remember, do not implement the runTestWithInput function. Just add it to the test code as it is given above.
+
+- Here is an example test case:
+const inputData = 'example input data';
+const expectedOutput = 'expected output data';
+const output = await runTestWithInput(inputData);
+expect(output.trim()).toBe(expectedOutput.trim());
+
+- If there are multiple answers or there is an allowed precision described in the description for the output, do not use the exact format above, use appropriate assertion method logic that checks if the answer is within the allowed range, or within the possible answers.
+- Make sure to follow the input pattern in the problem description. E.g. if the end of the input is denoted by 0 or # or any similar character, make sure to add it to the input string in the test case.
+
+Output instructions:
+- Do not add any explanation or commentary before or after the test code.
+"""
+    return prompt
+
 def func_generation_prompt(lang):
     if lang == "Python":
         return get_python_prompt_unit_test_generation
     elif lang == "Java":
         return get_java_prompt_unit_test_generation
+    elif lang == "JavaScript":
+        return get_js_prompt_unit_test_generation
 def save_txt(save_path, content):
     with open(save_path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -150,7 +190,7 @@ def main(args):
         os.makedirs(save_folder)
 
 
-    for status in ["Accepted", "Wrong_Answer"]:
+    for status in ["Wrong_Answer", "Accepted"]:
         save_file = f"thesis_dataset/generated/{args.lang}/{args.lang}_{status}_res.xlsx"
         if not os.path.exists(save_file):
             src_file = f"thesis_dataset/splits/{args.lang}_{status}.csv"
@@ -188,7 +228,7 @@ def main(args):
                 if os.path.exists(save_path)  and not open(save_path).read() and "rate_limit_error" not in open(save_path).read():
                     df_input.at[idx, col_name] =save_path
                     continue
-                print(pid, submission_id)
+                print(args.lang, pid, submission_id)
                 desc_path = f"thesis_dataset/problem_descriptions/{pid}.html"
                 desc_content = open(desc_path).read()
                 wrapped_code_path = f"thesis_dataset/data/{pid}/{args.lang}/{submission_id}.{ext}"
