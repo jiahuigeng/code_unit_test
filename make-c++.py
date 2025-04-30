@@ -5,7 +5,8 @@ import difflib
 import gcovr
 import shutil
 import re
-
+import json
+from xml.etree import ElementTree as ET
 # Directories
 C_DIR = Path("C")
 CPP_DIR = Path("C++")
@@ -351,6 +352,7 @@ def get_codes():
 def filter_by_lang(codes, lang):
     return [code for code in codes if code.lang == lang]
 
+
 def generate_cases(prompt, model):
     return ''
 
@@ -363,7 +365,6 @@ def extract_code_in_backticks(unprocessed_code):
     if len(codes) == 0:
         return None
     return codes[0]
-
 
 def extract_tests(unprocessed_code):
     test_pattern = r"TEST\([^\)]+\)\s*{[^}]+}"
@@ -456,6 +457,32 @@ char* getTestOutput(const char* input) {
     '''g++ -std=c++17 p02277_s572622168_gpt-4o.cpp  -I  /opt/homebrew/opt/googletest/include -L /opt/homebrew/opt/googletest/lib  -lgtest -lgtest_main -pthread -o test.out'''
     '''brew install googletest'''
 
+def parse_gtest_xml(xml_file):
+    """Parse a GTest XML report and return JSON-compatible summary."""
+    try:
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        summary = {
+            "file": os.path.basename(xml_file),
+            "name": root.attrib.get("name", ""),
+            "tests": int(root.attrib.get("tests", 0)),
+            "failures": int(root.attrib.get("failures", 0)),
+            "errors": int(root.attrib.get("errors", 0)),
+            "disabled": int(root.attrib.get("disabled", 0)),
+            "timestamp": root.attrib.get("timestamp", "")
+        }
+
+        summary["passed"] = summary["tests"] - summary["failures"] - summary["errors"] - summary["disabled"]
+        return summary
+    except ET.ParseError:
+        print(f"Failed to parse XML: {xml_file}")
+        return None
+
+def write_json_report(results, json_path="gtest_summary.json"):
+    with open(json_path, "w") as f:
+        json.dump(results, f, indent=4)
+    print(f"✅ JSON summary written to: {json_path}")
+
 def compile_cpp_and_run(cpp_dir: Path):
     print("🔨 Compiling C++ sources...")
     for cpp_file in cpp_dir.glob("*.cpp"):
@@ -465,9 +492,19 @@ def compile_cpp_and_run(cpp_dir: Path):
         result = subprocess.run(cmd)
         if result.returncode != 0:
             print(f"❌ Failed to compile {cpp_file}")
+        xml_file = str(cpp_file.with_suffix(".xml"))
+        try:
+            subprocess.run(
+                [str(output_file), f"--gtest_output=xml:{xml_file}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            summary = parse_gtest_xml(xml_file)
+            with open(str(cpp_file.with_suffix(".json")), "w") as fd:
+                json.dump(summary, fd)
 
-        subprocess.run([output_file])
-
+        except subprocess.CalledProcessError as ex:
+            print(f"Error running {output_file}: {ex}")
 
 def coverage(path):
     os.makedirs(path, exist_ok=True)
@@ -479,7 +516,6 @@ def coverage(path):
     subprocess.run(html_command, check=True)
     print(f"HTML coverage report generated")
 
-
 def main():
     codes = get_codes()
     codes = filter_by_lang(codes, 'C++')
@@ -490,6 +526,7 @@ def main():
     print(prompt)
     gen_filename = code.gen_filename(model)
     gen_filepath = os.path.join(gen_code_dir, gen_filename)
+    # TODO
     if not os.path.isfile(gen_filepath):
         gen_src_content = generate_cases(prompt, model)
         with open(gen_filepath, 'w') as fd:
@@ -510,33 +547,6 @@ def main():
     compile_cpp_and_run(Path(gen_code_dir))
 
     coverage(os.path.join(gen_code_dir, 'coverage'))
-    # total = 0
-    # passed = 0
-
-    # files = list(set([f.split('.')[0] for f in os.listdir(TEST_DIR)]))
-
-    # for exe in (
-    #     list(C_DIR.glob("*.out")) +
-    #     list(CPP_DIR.glob("*.out"))
-    #     # list(JAVA_DIR.glob("*.class"))
-    #     ):
-    #     for file in files:
-    #         in_file = TEST_DIR / f"{file}.in"
-    #         out_file = TEST_DIR / f"{file}.out"
-    #         if not in_file.exists() or not out_file.exists():
-    #             print(f"⚠️ Skipping {exe}: missing test files")
-    #             continue
-
-    #         total += 1
-    #         in_str = in_file.read_text()
-    #         out_str = out_file.read_text()
-
-    #         if run_test(exe, in_str, out_str):
-    #             passed += 1
-
-    # print(f"\n📊 Summary: {passed}/{total} passed")
-    # coverage()
-
 
 if __name__ == "__main__":
     main()
