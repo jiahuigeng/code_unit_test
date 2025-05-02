@@ -96,7 +96,6 @@ def get_codes():
             if not code_data_dir.exists():
                 print(f"No code for problem id: {pid.stem}")
                 continue
-            print(f"code_data_dir: {code_data_dir}")
 
             for src_path in code_data_dir.glob(f"*.{file_ext_map[lang]}"):
                 code = Code(pid.stem, description, src_path, lang)
@@ -241,40 +240,81 @@ def write_json_report(results, json_path="gtest_summary.json"):
         json.dump(results, f, indent=4)
     print(f"✅ JSON summary written to: {json_path}")
 
-def compile_cpp_and_run(cpp_dir: Path):
+def compile_cpp_and_run(cpp_file: Path | tuple):
+    if isinstance(cpp_file, tuple):
+        cpp_file = cpp_file[0]
+
+    output_file = cpp_file.with_suffix(".out")
+    if not output_file.exists():
+        cmd = ["g++", *CXX_FLAGS, str(cpp_file), "-o", str(output_file)]
+        print(f"Compiling {cpp_file} -> {output_file}")
+        try:
+            result = subprocess.run(cmd)
+            if result.returncode != 0:
+                print(f"❌ Failed to compile {cpp_file}")
+        except ex:
+            print(f"Fail to compile {cpp_file}, ex: {ex}")
+
+    if cpp_file.with_suffix(".json").exists():
+        print(f"Already tested {cpp_file}")
+        return
+    if not output_file.exists():
+        # NOTE: we fail to compile this cpp file
+        return
+
+    xml_file = str(cpp_file.with_suffix(".xml"))
+    try:
+        subprocess.run(
+            [str(output_file), f"--gtest_output=xml:{xml_file}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        summary = parse_gtest_xml(xml_file)
+        with open(str(cpp_file.with_suffix(".json")), "w") as fd:
+            json.dump(summary, fd)
+
+    except subprocess.CalledProcessError as ex:
+        print(f"Error running {output_file}: {ex}")
+
+def compile_cpp_and_run_wrapper(cpp_dir: Path):
     print("🔨 Compiling C++ sources...")
     for cpp_file in cpp_dir.glob("*.cpp"):
-        output_file = cpp_file.with_suffix(".out")
-        if not output_file.exists():
-            cmd = ["g++", *CXX_FLAGS, str(cpp_file), "-o", str(output_file)]
-            print(f"Compiling {cpp_file} -> {output_file}")
-            try:
-                result = subprocess.run(cmd)
-                if result.returncode != 0:
-                    print(f"❌ Failed to compile {cpp_file}")
-            except ex:
-                print(f"Fail to compile {cpp_file}, ex: {ex}")
+        compile_cpp_and_run(cpp_file)
+        # output_file = cpp_file.with_suffix(".out")
+        # if not output_file.exists():
+        #     cmd = ["g++", *CXX_FLAGS, str(cpp_file), "-o", str(output_file)]
+        #     print(f"Compiling {cpp_file} -> {output_file}")
+        #     try:
+        #         result = subprocess.run(cmd)
+        #         if result.returncode != 0:
+        #             print(f"❌ Failed to compile {cpp_file}")
+        #     except ex:
+        #         print(f"Fail to compile {cpp_file}, ex: {ex}")
 
-        if cpp_file.with_suffix(".json").exists():
-            print(f"Already tested {cpp_file}")
-            continue
-        if not output_file.exists():
-            # NOTE: we fail to compile this cpp file
-            continue
+        # if cpp_file.with_suffix(".json").exists():
+        #     print(f"Already tested {cpp_file}")
+        #     continue
+        # if not output_file.exists():
+        #     # NOTE: we fail to compile this cpp file
+        #     continue
 
-        xml_file = str(cpp_file.with_suffix(".xml"))
-        try:
-            subprocess.run(
-                [str(output_file), f"--gtest_output=xml:{xml_file}"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            summary = parse_gtest_xml(xml_file)
-            with open(str(cpp_file.with_suffix(".json")), "w") as fd:
-                json.dump(summary, fd)
+        # xml_file = str(cpp_file.with_suffix(".xml"))
+        # try:
+        #     subprocess.run(
+        #         [str(output_file), f"--gtest_output=xml:{xml_file}"],
+        #         stdout=subprocess.PIPE,
+        #         stderr=subprocess.PIPE
+        #     )
+        #     summary = parse_gtest_xml(xml_file)
+        #     with open(str(cpp_file.with_suffix(".json")), "w") as fd:
+        #         json.dump(summary, fd)
 
-        except subprocess.CalledProcessError as ex:
-            print(f"Error running {output_file}: {ex}")
+        # except subprocess.CalledProcessError as ex:
+        #     print(f"Error running {output_file}: {ex}")
+
+    # with Pool(32) as pool:
+    #     pool.map(compile_cpp_and_run, [(cpp_file,) for cpp_file in cpp_dir.glob("*.cpp")])
+    # pool.join()
 
 
 def coverage(path: Path):
@@ -299,9 +339,9 @@ def run(code: Code, model: str):
         gen_src_content = generate_cases(prompt, model)
         with open(gen_filepath, 'w') as fd:
             fd.write(gen_src_content)
-        print(f"Generate {code.src_path} -> {str(gen_filepath)}")
+        print(f"Generate raw file {code.src_path} -> {str(gen_filepath)}")
     else:
-        print(f"Existed {code.src_path} -> {str(gen_filepath)}")
+        print(f"Existed raw file {code.src_path} -> {str(gen_filepath)}")
 
 def run_wrapper(args):
     code, model = args
@@ -316,14 +356,10 @@ def main(args):
     # Here we only select one code, use for loop to generate more tests and get coverage and tests stats
 
     # for idx, code in enumerate(codes):
-    #     if idx >= 3:
-    #         break
-
     #     run(code, args.model_name)
-    with Pool(32) as pool:
-        codes = codes[:10]
-        pool.map(run_wrapper, [(code, args.model_name) for code in codes])
-    pool.join()
+    # with Pool(32) as pool:
+    #     pool.map(run_wrapper, [(code, args.model_name) for code in codes])
+    # pool.join()
 
     for idx, code in enumerate(codes):
         gen_filename = code.gen_filename(args.model_name)
@@ -338,14 +374,14 @@ def main(args):
         # Post processing
         unprocessed_code = extract_code_in_backticks(unprocessed_code)
         if unprocessed_code is None:
-            return
+            continue
         tests = extract_tests(unprocessed_code)
         gen_full_code = assemble(code.src, tests)
         with open(f'{gen_filepath}.cpp', 'w') as fd:
             fd.write(gen_full_code)
 
-    compile_cpp_and_run(gen_code_dir)
-    coverage(gen_code_dir / 'coverage')
+    compile_cpp_and_run_wrapper(gen_code_dir)
+    coverage(gen_code_dir / f'coverage-{args.model_name}')
 
 
 if __name__ == "__main__":
