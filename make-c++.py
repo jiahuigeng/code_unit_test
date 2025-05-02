@@ -272,61 +272,67 @@ def compile_cpp_and_run(cpp_file: Path | tuple):
         cpp_file = cpp_file[0]
 
     output_file = cpp_file.with_suffix(".out")
-    if not output_file.exists():
+
+    # if not output_file.exists():
+    if True:
         cmd = [GCC, *CXX_FLAGS, str(cpp_file), "-o", str(output_file)]
 
         print(f"Compiling {cpp_file} -> {output_file}")
-        try:
-            result = subprocess.run(cmd)
-            if result.returncode != 0:
-                print(f"❌ Failed to compile {cpp_file}, cmd: {' '.join(cmd)}")
-                if 'p02403_s976586168_gpt-4o' in str(output_file): #gpt-4o, generated tests is invalid due to mismatched type
-                    pass
-                elif 'p02405_s591959194_gpt-4o' in str(output_file): #gpt-4o, generated tests is invalid due to mismatched type
-                    pass
-                elif 'p02403_s555993861_gpt-4o' in str(output_file): #gpt-4o, generated tests is invalid due to mismatched type
-                    pass
-                elif 'p02388_s821487200' in str(output_file): # main contain parameter, main(int argc, char* argv[]), we don't process it
-                    pass
-                elif 'p02262_s322394753' in str(output_file): # original code error (maybe due to system, fail on macos
-                    pass
-                elif 'p00047_s514230605' in str(output_file):# original code error (maybe due to system, fail on macos
-                    pass
-                elif 'p02414_s411876042' in str(output_file):# original code error (maybe due to system, fail on macos
-                    pass
-                elif 'p02270_s850877678' in str(output_file):# original code error (maybe due to system, fail on macos
-                    pass
-                elif 'p02262_s511397216' in str(output_file):# original code error (maybe due to system, fail on macos
-                    pass
-                elif 'p02270_s502947922' in str(output_file):# original code error (maybe due to system, fail on macos
-                    pass
-                elif 'p00356_s530969750' in str(output_file):# original code error (maybe due to system, fail on macos
-                    pass
-                elif 'p02419_s792789589' in str(output_file): # original code error (maybe due to system, fail on macos
-                    pass
-                elif 'p00042_s296753194' in str(output_file): # original code error (maybe due to system, fail on macos
-                    pass
-                else:
-                    sys.exit(1)
-        except Exception as ex:
-            print(f"Fail to compile {cpp_file}, ex: {ex}")
-            sys.exit(1)
 
-    if cpp_file.with_suffix(".json").exists():
-        print(f"Already tested {cpp_file}")
-        return
+        result = subprocess.run(cmd)
+        if result.returncode != 0:
+            print(f"❌ Failed to compile {cpp_file}, cmd: {' '.join(cmd)}")
+            cpp_file.unlink()                                  # avoid bugs in coverage
+            if 'p02403_s976586168_gpt-4o' in str(output_file): #gpt-4o, generated tests is invalid due to mismatched type
+                pass
+            elif 'p02405_s591959194_gpt-4o' in str(output_file): #gpt-4o, generated tests is invalid due to mismatched type
+                pass
+            elif 'p02403_s555993861_gpt-4o' in str(output_file): #gpt-4o, generated tests is invalid due to mismatched type
+                pass
+            elif 'p02388_s821487200' in str(output_file): # main contain parameter, main(int argc, char* argv[]), we don't process it
+                pass
+            elif 'p02262_s322394753' in str(output_file): # original code error (maybe due to system, fail on macos
+                pass
+            elif 'p00047_s514230605' in str(output_file):# original code error (maybe due to system, fail on macos
+                pass
+            elif 'p02414_s411876042' in str(output_file):# original code error (maybe due to system, fail on macos
+                pass
+            elif 'p02270_s850877678' in str(output_file):# original code error (maybe due to system, fail on macos
+                pass
+            elif 'p02262_s511397216' in str(output_file):# original code error (maybe due to system, fail on macos
+                pass
+            elif 'p02270_s502947922' in str(output_file):# original code error (maybe due to system, fail on macos
+                pass
+            elif 'p00356_s530969750' in str(output_file):# original code error (maybe due to system, fail on macos
+                pass
+            elif 'p02419_s792789589' in str(output_file): # original code error (maybe due to system, fail on macos
+                pass
+            elif 'p00042_s296753194' in str(output_file): # original code error (maybe due to system, fail on macos
+                pass
+            elif 'p00001_s355998091' in str(output_file): # original code error (maybe due to system, fail on macos
+                pass
+            elif 'p02282_s667514689' in str(output_file): # original code error (maybe due to system, fail on macos
+                pass
+            else:
+                sys.exit(1)
 
     if not output_file.exists():
         # NOTE: we fail to compile this cpp file
         return
 
+    # if cpp_file.with_suffix(".json").exists():
+    #     print(f"Already tested {cpp_file}")
+    #     return
+
     # xml_file = str(cpp_file.with_suffix(".xml"))
     # try:
+    #     cmd = [str(output_file), f"--gtest_output=xml:{xml_file}"]
+    #     print(f"> run command: {' '.join(cmd)}")
     #     subprocess.run(
-    #         [str(output_file), f"--gtest_output=xml:{xml_file}"],
+    #         cmd,
     #         stdout=subprocess.PIPE,
     #         stderr=subprocess.PIPE,
-    #         timeout=10,
+    #         timeout=60,
     #     )
 
     #     summary = parse_gtest_xml(xml_file)
@@ -334,8 +340,10 @@ def compile_cpp_and_run(cpp_file: Path | tuple):
     #         json.dump(summary, fd)
     # except subprocess.TimeoutExpired:
     #     print(f"The subprocess took too long and was terminated: {output_file}")
+    #     sys.exit(1)
     # except subprocess.CalledProcessError as ex:
     #     print(f"Error running {output_file}: {ex}")
+
 
 def compile_cpp_and_run_wrapper(cpp_dir: Path):
     print("🔨 Compiling C++ sources...")
@@ -349,11 +357,17 @@ def compile_cpp_and_run_wrapper(cpp_dir: Path):
 
 def coverage(path: Path):
     path.mkdir(exist_ok=True)
-    print("\n📊 Generating individual coverage reports for each executable...")
+
     html_command = [
         "gcovr",
+    ]
+    for summary in path.parent.rglob("*.json"):
+        html_command.append(str(summary.with_suffix('.cpp')))
+
+    html_command.extend([
         "--html", "--html-details", "--output", f"{str(path)}/report.html",
-        ]
+    ])
+    print("\n📊 Generating individual coverage reports for each executable...")
     subprocess.run(html_command, check=True)
     print(f"HTML coverage report generated")
 
@@ -384,7 +398,7 @@ def main(args):
 
     gen_code_dir = Path(f'thesis_dataset/generated/{args.lang}')
     # Here we only select one code, use for loop to generate more tests and get coverage and tests stats
-
+    # model requests
     # for idx, code in enumerate(codes):
     #     run(code, args.model_name)
     # with Pool(32) as pool:
