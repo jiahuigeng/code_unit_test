@@ -1,3 +1,4 @@
+import sys
 import argparse
 import subprocess
 import os
@@ -16,13 +17,17 @@ logging.basicConfig(
 )
 
 
-CXX_FLAGS = ["-fprofile-arcs", "-ftest-coverage", "-g",
-             "std", "c++20",
+CXX_FLAGS = ["-Wno-write-strings",
+             "-Wno-return-type",
+             "-fprofile-arcs", "-ftest-coverage", "-g",
+             "-std=c++20",
+             "-I", "/opt/homebrew/include",
+             "-L", "/opt/homebrew/lib",
              "-I", "/opt/homebrew/opt/googletest/include",
              "-L", "/opt/homebrew/opt/googletest/lib",
              "-I", "thesis_dataset/generated/C++",
              "-lgtest", "-lgtest_main", "-pthread"]
-GCC = "g++-14"
+GCC = "clang++"
 
 def get_llm_prompt_unit_test_generation(description, code):
     prompt = f"""
@@ -152,7 +157,9 @@ def assemble(src_content, tests):
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+using namespace std;
 int test_main();
+
 char* getTestOutput(const char* input) {
    // Create unique temp file names
     char input_filename[] = "/tmp/tmp_input_XXXXXX";
@@ -202,11 +209,30 @@ char* getTestOutput(const char* input) {
 }
 """
 
-    src_content = src_content.replace("main", "test_main")
+    # Remove multi-line comments (/* ... */)
+    src_content = re.sub(r'/\*.*?\*/', '', src_content, flags=re.DOTALL)
+    # Remove whole lines that begin with optional whitespace followed by //
+    src_content = re.sub(r'^\s*//.*$', '', src_content, flags=re.MULTILINE)
+    main_start_pos = src_content.index("main")
+    main_end_pos = main_start_pos + len("main")
+    while True:
+        c = src_content[main_end_pos]
+        if c == ')':
+            main_end_pos += 1
+            break
+        main_end_pos += 1
+    main_function_id = src_content[main_start_pos:main_end_pos]
+    test_main_function_id = f'test_{main_function_id}'
+    # src_content = src_content.replace(main_function_id, test_main_function_id)
+    src_content = src_content.replace(main_function_id, 'test_main()')
+
     full_code = f'{getTestOutput}\n\n'
     full_code += f'{src_content}\n\n'
     for test in tests:
         full_code += f'{test}\n\n'
+
+    full_code = full_code.replace('constexpr', 'const')
+    # full_code = full_code.replace('int test_main();', f'int {test_main_function_id};');
     return full_code
 
     '''g++ -std=c++17 p02277_s572622168_gpt-4o.cpp  -I  /opt/homebrew/opt/googletest/include -L /opt/homebrew/opt/googletest/lib  -lgtest -lgtest_main -pthread -o test.out'''
@@ -254,8 +280,37 @@ def compile_cpp_and_run(cpp_file: Path | tuple):
             result = subprocess.run(cmd)
             if result.returncode != 0:
                 print(f"❌ Failed to compile {cpp_file}, cmd: {' '.join(cmd)}")
-        except ex:
+                if 'p02403_s976586168_gpt-4o' in str(output_file): #gpt-4o, generated tests is invalid due to mismatched type
+                    pass
+                elif 'p02405_s591959194_gpt-4o' in str(output_file): #gpt-4o, generated tests is invalid due to mismatched type
+                    pass
+                elif 'p02403_s555993861_gpt-4o' in str(output_file): #gpt-4o, generated tests is invalid due to mismatched type
+                    pass
+                elif 'p02388_s821487200' in str(output_file): # main contain parameter, main(int argc, char* argv[]), we don't process it
+                    pass
+                elif 'p02262_s322394753' in str(output_file): # original code error (maybe due to system, fail on macos
+                    pass
+                elif 'p00047_s514230605' in str(output_file):# original code error (maybe due to system, fail on macos
+                    pass
+                elif 'p02414_s411876042' in str(output_file):# original code error (maybe due to system, fail on macos
+                    pass
+                elif 'p02270_s850877678' in str(output_file):# original code error (maybe due to system, fail on macos
+                    pass
+                elif 'p02262_s511397216' in str(output_file):# original code error (maybe due to system, fail on macos
+                    pass
+                elif 'p02270_s502947922' in str(output_file):# original code error (maybe due to system, fail on macos
+                    pass
+                elif 'p00356_s530969750' in str(output_file):# original code error (maybe due to system, fail on macos
+                    pass
+                elif 'p02419_s792789589' in str(output_file): # original code error (maybe due to system, fail on macos
+                    pass
+                elif 'p00042_s296753194' in str(output_file): # original code error (maybe due to system, fail on macos
+                    pass
+                else:
+                    sys.exit(1)
+        except Exception as ex:
             print(f"Fail to compile {cpp_file}, ex: {ex}")
+            sys.exit(1)
 
     if cpp_file.with_suffix(".json").exists():
         print(f"Already tested {cpp_file}")
