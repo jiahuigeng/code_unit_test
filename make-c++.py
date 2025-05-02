@@ -380,6 +380,7 @@ def extract_headers(unprocessed_code):
     headers = re.findall(pattern, unprocessed_code)
     return headers
 
+################################################################################
 def assemble(src_content, tests):
     getTestOutput = r"""#include <gtest/gtest.h>
 #include <stdio.h>
@@ -520,6 +521,7 @@ def main():
     codes = get_codes()
     codes = filter_by_lang(codes, 'C++')
     gen_code_dir = 'thesis_dataset/generated/C++'
+    # Here we only select one code, use for loop to generate more tests and get coverage and tests stats
     code = codes[0]
     model = 'gpt-4o'
     prompt = get_llm_prompt_unit_test_generation(code.desc, code.src)
