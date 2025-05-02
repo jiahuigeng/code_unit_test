@@ -1,15 +1,18 @@
+import argparse
 import subprocess
 import os
 from pathlib import Path
-import difflib
-import gcovr
-import shutil
 import re
 import json
 from xml.etree import ElementTree as ET
+from utils_llm import *
+from multiprocessing import Pool, Process
 
-C_FLAGS = ["-fprofile-arcs", "-ftest-coverage", "-g", "-I", "/opt/homebrew/opt/googletest/include", "-L", "/opt/homebrew/opt/googletest/lib", "-lgtest", "-lgtest_main", "-pthread"]
-CXX_FLAGS = ["-fprofile-arcs", "-ftest-coverage", "-g", "-I", "/opt/homebrew/opt/googletest/include", "-L", "/opt/homebrew/opt/googletest/lib", "-lgtest", "-lgtest_main", "-pthread"]
+CXX_FLAGS = ["-fprofile-arcs", "-ftest-coverage", "-g",
+             "-I", "/opt/homebrew/opt/googletest/include",
+             "-L", "/opt/homebrew/opt/googletest/lib",
+             "-I", "thesis_dataset/generated/C++",
+             "-lgtest", "-lgtest_main", "-pthread"]
 
 def get_llm_prompt_unit_test_generation(description, code):
     prompt = f"""
@@ -66,29 +69,37 @@ class Code:
     def gen_filename(self, model):
         return f'{self.pid}_{self.src_filename}_{model}.txt'
 
+file_ext_map = {
+    "Python": "py",
+    "C++": "cpp",
+    "C": "c",
+    "Java": "java",
+    "JavaScript": "js",
+    "Ruby": "rb",
+    "Rust":"rs",
+    "Go":"go",
+}
+
 def get_codes():
-    problem_description_dir = "thesis_dataset/problem_descriptions"
-    code_data_dir = "thesis_dataset/data"
+    problem_description_dir = Path("thesis_dataset/problem_descriptions")
+    base_code_data_dir = Path("thesis_dataset/data")
 
-    problem_ids = [pid for pid in os.listdir(problem_description_dir) if pid.endswith(".html")]
-
-    pid_to_desc_and_lang_to_src = {}
+    problem_ids = [x for x in problem_description_dir.glob("*.html")]
     codes = []
     for pid in problem_ids:
-        description_path = os.path.join(problem_description_dir, pid)
-        with open(description_path, 'r') as fd:
+        with open(pid, 'r') as fd:
             description = fd.read()
 
         langs = ['C++', 'Python', 'Java', 'JavaScript']
         for lang in langs:
-            code_data_dir = os.path.join(code_data_dir, pid.split(".")[0], lang)
-            if not os.path.isdir(code_data_dir):
+            code_data_dir = base_code_data_dir / pid.stem / lang
+            if not code_data_dir.exists():
+                print(f"No code for problem id: {pid.stem}")
                 continue
+            print(f"code_data_dir: {code_data_dir}")
 
-            src_files = [src for src in os.listdir(code_data_dir)]
-            for src_file in src_files:
-                src_path = os.path.join(code_data_dir, src_file)
-                code = Code(pid.split('.')[0], description, src_path, lang)
+            for src_path in code_data_dir.glob(f"*.{file_ext_map[lang]}"):
+                code = Code(pid.stem, description, src_path, lang)
                 codes.append(code)
 
     return codes
@@ -98,7 +109,9 @@ def filter_by_lang(codes, lang):
 
 
 def generate_cases(prompt, model):
-    return ''
+    client = get_commercial_model(model)
+    resp = prompt_commercial_model(client, model, prompt, image_id="")
+    return resp
 
 
 ################################################################################
@@ -232,11 +245,23 @@ def compile_cpp_and_run(cpp_dir: Path):
     print("🔨 Compiling C++ sources...")
     for cpp_file in cpp_dir.glob("*.cpp"):
         output_file = cpp_file.with_suffix(".out")
-        cmd = ["g++", *CXX_FLAGS, str(cpp_file), "-o", str(output_file)]
-        print(f"Compiling {cpp_file} -> {output_file}")
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
-            print(f"❌ Failed to compile {cpp_file}")
+        if not output_file.exists():
+            cmd = ["g++", *CXX_FLAGS, str(cpp_file), "-o", str(output_file)]
+            print(f"Compiling {cpp_file} -> {output_file}")
+            try:
+                result = subprocess.run(cmd)
+                if result.returncode != 0:
+                    print(f"❌ Failed to compile {cpp_file}")
+            except ex:
+                print(f"Fail to compile {cpp_file}, ex: {ex}")
+
+        if cpp_file.with_suffix(".json").exists():
+            print(f"Already tested {cpp_file}")
+            continue
+        if not output_file.exists():
+            # NOTE: we fail to compile this cpp file
+            continue
+
         xml_file = str(cpp_file.with_suffix(".xml"))
         try:
             subprocess.run(
@@ -251,48 +276,82 @@ def compile_cpp_and_run(cpp_dir: Path):
         except subprocess.CalledProcessError as ex:
             print(f"Error running {output_file}: {ex}")
 
-def coverage(path):
-    os.makedirs(path, exist_ok=True)
+
+def coverage(path: Path):
+    path.mkdir(exist_ok=True)
     print("\n📊 Generating individual coverage reports for each executable...")
     html_command = [
         "gcovr",
-        "--html", "--html-details", "--output", f"{path}/report.html",
+        "--html", "--html-details", "--output", f"{str(path)}/report.html",
         ]
     subprocess.run(html_command, check=True)
     print(f"HTML coverage report generated")
 
-def main():
-    codes = get_codes()
-    codes = filter_by_lang(codes, 'C++')
-    gen_code_dir = 'thesis_dataset/generated/C++'
-    # Here we only select one code, use for loop to generate more tests and get coverage and tests stats
-    code = codes[0]
-    model = 'gpt-4o'
+
+def run(code: Code, model: str):
+    gen_code_dir = Path(f'thesis_dataset/generated/{code.lang}')
     prompt = get_llm_prompt_unit_test_generation(code.desc, code.src)
-    print(prompt)
+    # print(prompt)
     gen_filename = code.gen_filename(model)
-    gen_filepath = os.path.join(gen_code_dir, gen_filename)
-    # TODO
-    if not os.path.isfile(gen_filepath):
+    gen_filepath = gen_code_dir / gen_filename
+
+    if not gen_filepath.exists():
         gen_src_content = generate_cases(prompt, model)
         with open(gen_filepath, 'w') as fd:
             fd.write(gen_src_content)
-        print(f"Generate {code.src_path} -> {gen_filepath}")
+        print(f"Generate {code.src_path} -> {str(gen_filepath)}")
+    else:
+        print(f"Existed {code.src_path} -> {str(gen_filepath)}")
 
-    with open(gen_filepath, 'r') as fd:
-        unprocessed_code = fd.read()
+def run_wrapper(args):
+    code, model = args
+    run(code, model)
 
-    # Post processing
-    unprocessed_code = extract_code_in_backticks(unprocessed_code)
-    tests = extract_tests(unprocessed_code)
-    gen_full_code = assemble(code.src, tests)
 
-    with open(f'{gen_filepath}.cpp', 'w') as fd:
-        fd.write(gen_full_code)
+def main(args):
+    codes = get_codes()
+    codes = filter_by_lang(codes, args.lang)
 
-    compile_cpp_and_run(Path(gen_code_dir))
+    gen_code_dir = Path(f'thesis_dataset/generated/{args.lang}')
+    # Here we only select one code, use for loop to generate more tests and get coverage and tests stats
 
-    coverage(os.path.join(gen_code_dir, 'coverage'))
+    # for idx, code in enumerate(codes):
+    #     if idx >= 3:
+    #         break
+
+    #     run(code, args.model_name)
+    with Pool(32) as pool:
+        codes = codes[:10]
+        pool.map(run_wrapper, [(code, args.model_name) for code in codes])
+    pool.join()
+
+    for idx, code in enumerate(codes):
+        gen_filename = code.gen_filename(args.model_name)
+        gen_filepath = gen_code_dir / gen_filename
+        if gen_filepath.exists() is False:
+            print(f"Fail to get response for {gen_filepath}, please re-generate it ...")
+            continue
+
+        with open(gen_filepath, 'r') as fd:
+            unprocessed_code = fd.read()
+
+        # Post processing
+        unprocessed_code = extract_code_in_backticks(unprocessed_code)
+        if unprocessed_code is None:
+            return
+        tests = extract_tests(unprocessed_code)
+        gen_full_code = assemble(code.src, tests)
+        with open(f'{gen_filepath}.cpp', 'w') as fd:
+            fd.write(gen_full_code)
+
+    compile_cpp_and_run(gen_code_dir)
+    coverage(gen_code_dir / 'coverage')
+
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lang", type=str, default="C++")
+    parser.add_argument("--model_name", type=str, default="gpt-4o")
+    args = parser.parse_args()
+
+    main(args)
