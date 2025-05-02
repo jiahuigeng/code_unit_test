@@ -7,12 +7,22 @@ import json
 from xml.etree import ElementTree as ET
 from utils_llm import *
 from multiprocessing import Pool, Process
+import logging
+
+# Configure the logging system
+logging.basicConfig(
+    level=logging.INFO,  # Set the logging level
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
 
 CXX_FLAGS = ["-fprofile-arcs", "-ftest-coverage", "-g",
+             "std", "c++20",
              "-I", "/opt/homebrew/opt/googletest/include",
              "-L", "/opt/homebrew/opt/googletest/lib",
              "-I", "thesis_dataset/generated/C++",
              "-lgtest", "-lgtest_main", "-pthread"]
+GCC = "g++-14"
 
 def get_llm_prompt_unit_test_generation(description, code):
     prompt = f"""
@@ -145,8 +155,8 @@ def assemble(src_content, tests):
 int test_main();
 char* getTestOutput(const char* input) {
    // Create unique temp file names
-    char input_filename[] = "tmp_input_XXXXXX";
-    char output_filename[] = "tmp_output_XXXXXX";
+    char input_filename[] = "/tmp/tmp_input_XXXXXX";
+    char output_filename[] = "/tmp/tmp_output_XXXXXX";
     int input_fd = mkstemp(input_filename);
     int output_fd = mkstemp(output_filename);
 
@@ -199,18 +209,6 @@ char* getTestOutput(const char* input) {
         full_code += f'{test}\n\n'
     return full_code
 
-
-# def compile():
-#     print("🔨 Compiling C sources...")
-#     for c_file in C_DIR.glob("*.c"):
-#         output_file = c_file.with_suffix(".out")
-#         cmd = ["gcc", *C_FLAGS, str(c_file), "-o", str(output_file)]
-#         print(f"Compiling {c_file} -> {output_file}")
-#         result = subprocess.run(cmd)
-#         if result.returncode != 0:
-#             print(f"❌ Failed to compile {c_file}")
-
-
     '''g++ -std=c++17 p02277_s572622168_gpt-4o.cpp  -I  /opt/homebrew/opt/googletest/include -L /opt/homebrew/opt/googletest/lib  -lgtest -lgtest_main -pthread -o test.out'''
     '''brew install googletest'''
 
@@ -234,6 +232,9 @@ def parse_gtest_xml(xml_file):
     except ET.ParseError:
         print(f"Failed to parse XML: {xml_file}")
         return None
+    except FileNotFoundError:
+        print(f"File not found: {xml_file}")
+        return None
 
 def write_json_report(results, json_path="gtest_summary.json"):
     with open(json_path, "w") as f:
@@ -246,71 +247,45 @@ def compile_cpp_and_run(cpp_file: Path | tuple):
 
     output_file = cpp_file.with_suffix(".out")
     if not output_file.exists():
-        cmd = ["g++", *CXX_FLAGS, str(cpp_file), "-o", str(output_file)]
+        cmd = [GCC, *CXX_FLAGS, str(cpp_file), "-o", str(output_file)]
+
         print(f"Compiling {cpp_file} -> {output_file}")
         try:
             result = subprocess.run(cmd)
             if result.returncode != 0:
-                print(f"❌ Failed to compile {cpp_file}")
+                print(f"❌ Failed to compile {cpp_file}, cmd: {' '.join(cmd)}")
         except ex:
             print(f"Fail to compile {cpp_file}, ex: {ex}")
 
     if cpp_file.with_suffix(".json").exists():
         print(f"Already tested {cpp_file}")
         return
+
     if not output_file.exists():
         # NOTE: we fail to compile this cpp file
         return
 
-    xml_file = str(cpp_file.with_suffix(".xml"))
-    try:
-        subprocess.run(
-            [str(output_file), f"--gtest_output=xml:{xml_file}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        summary = parse_gtest_xml(xml_file)
-        with open(str(cpp_file.with_suffix(".json")), "w") as fd:
-            json.dump(summary, fd)
+    # xml_file = str(cpp_file.with_suffix(".xml"))
+    # try:
+    #     subprocess.run(
+    #         [str(output_file), f"--gtest_output=xml:{xml_file}"],
+    #         stdout=subprocess.PIPE,
+    #         stderr=subprocess.PIPE,
+    #         timeout=10,
+    #     )
 
-    except subprocess.CalledProcessError as ex:
-        print(f"Error running {output_file}: {ex}")
+    #     summary = parse_gtest_xml(xml_file)
+    #     with open(str(cpp_file.with_suffix(".json")), "w") as fd:
+    #         json.dump(summary, fd)
+    # except subprocess.TimeoutExpired:
+    #     print(f"The subprocess took too long and was terminated: {output_file}")
+    # except subprocess.CalledProcessError as ex:
+    #     print(f"Error running {output_file}: {ex}")
 
 def compile_cpp_and_run_wrapper(cpp_dir: Path):
     print("🔨 Compiling C++ sources...")
     for cpp_file in cpp_dir.glob("*.cpp"):
         compile_cpp_and_run(cpp_file)
-        # output_file = cpp_file.with_suffix(".out")
-        # if not output_file.exists():
-        #     cmd = ["g++", *CXX_FLAGS, str(cpp_file), "-o", str(output_file)]
-        #     print(f"Compiling {cpp_file} -> {output_file}")
-        #     try:
-        #         result = subprocess.run(cmd)
-        #         if result.returncode != 0:
-        #             print(f"❌ Failed to compile {cpp_file}")
-        #     except ex:
-        #         print(f"Fail to compile {cpp_file}, ex: {ex}")
-
-        # if cpp_file.with_suffix(".json").exists():
-        #     print(f"Already tested {cpp_file}")
-        #     continue
-        # if not output_file.exists():
-        #     # NOTE: we fail to compile this cpp file
-        #     continue
-
-        # xml_file = str(cpp_file.with_suffix(".xml"))
-        # try:
-        #     subprocess.run(
-        #         [str(output_file), f"--gtest_output=xml:{xml_file}"],
-        #         stdout=subprocess.PIPE,
-        #         stderr=subprocess.PIPE
-        #     )
-        #     summary = parse_gtest_xml(xml_file)
-        #     with open(str(cpp_file.with_suffix(".json")), "w") as fd:
-        #         json.dump(summary, fd)
-
-        # except subprocess.CalledProcessError as ex:
-        #     print(f"Error running {output_file}: {ex}")
 
     # with Pool(32) as pool:
     #     pool.map(compile_cpp_and_run, [(cpp_file,) for cpp_file in cpp_dir.glob("*.cpp")])
