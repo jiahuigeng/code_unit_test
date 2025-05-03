@@ -1,6 +1,7 @@
 import sys
 import argparse
 import subprocess
+import stat
 import os
 from pathlib import Path
 import re
@@ -15,19 +16,6 @@ logging.basicConfig(
     level=logging.INFO,  # Set the logging level
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
-
-## MacOS
-# CXX_FLAGS = ["-Wno-write-strings",
-#              "-Wno-return-type",
-#              "-fprofile-arcs", "-ftest-coverage", "-g",
-#              "-std=c++20",
-#              "-I", "/opt/homebrew/include",
-#              "-L", "/opt/homebrew/lib",
-#              "-I", "/opt/homebrew/opt/googletest/include",
-#              "-L", "/opt/homebrew/opt/googletest/lib",
-#              "-I", "thesis_dataset/generated/C++",
-#              "-lgtest", "-lgtest_main", "-pthread"]
-# GCC = "clang++"
 
 CXX_FLAGS = ["-Wno-write-strings",
              "-Wno-return-type",
@@ -149,7 +137,8 @@ def extract_code_in_backticks(unprocessed_code):
     return codes[0]
 
 def extract_tests(unprocessed_code):
-    test_pattern = r"TEST\([^\)]+\)\s*{[^}]+}"
+    # test_pattern = r"TEST\([^\)]+\)\s*{[^}]+}" # gpt-4o's pattern
+    test_pattern = r"TEST\s*\(\s*\w+\s*,\s*\w+\s*\)\s*\{(?:[^{}]|\{[^{}]*\})*\}" # claude-3-haiku pattern
     # Find all matches in the code
     tests = re.findall(test_pattern, unprocessed_code)
 
@@ -325,9 +314,11 @@ def compile_cpp_and_run(cpp_file: Path | tuple):
             # else:
             #     sys.exit(1)
 
-    if not output_file.exists():
+    if not output_file.exists() or output_file.stat().st_size == 0:
         # NOTE: we fail to compile this cpp file
         return
+
+    output_file.chmod(output_file.stat().st_mode | stat.S_IXUSR)
 
     if cpp_file.with_suffix(".json").exists():
         print(f"Already tested {cpp_file}")
@@ -348,25 +339,32 @@ def compile_cpp_and_run(cpp_file: Path | tuple):
             json.dump(summary, fd)
     except subprocess.TimeoutExpired:
         print(f"The subprocess took too long and was terminated: {output_file}")
+        summary = {"timeout": "The subprocess took too long and was terminated"}
+        with open(str(cpp_file.with_suffix(".json")), "w") as fd:
+            json.dump(summary, fd)
     except subprocess.CalledProcessError as ex:
         print(f"Error running {output_file}: {ex}")
+        summary = {"called_error": "The subprocess took too long and was terminated"}
+        with open(str(cpp_file.with_suffix(".json")), "w") as fd:
+            json.dump(summary, fd)
 
 
 def compile_cpp_and_run_wrapper(cpp_dir: Path):
     print("🔨 Compiling C++ sources...")
     # for cpp_file in cpp_dir.glob("*.cpp"):
     #     compile_cpp_and_run(cpp_file)
+    # try:
+    with Pool(32) as pool:
+        pool.map(compile_cpp_and_run, [(cpp_file,) for cpp_file in cpp_dir.glob("*.cpp")])
 
-    try:
-        with Pool(32) as pool:
-            pool.map(compile_cpp_and_run, [(cpp_file,) for cpp_file in cpp_dir.glob("*.cpp")])
-    except Exception as ex:
-        pool.close()
-        pool.join()
-        sys.exit(0)
+    pool.join()
+    # except Exception as ex:
+    #     pool.close()
+
+    #     sys.exit(0)
 
 
-def coverage(path: Path):
+def run_coverage(path: Path, model: str):
     path.mkdir(exist_ok=True)
 
     html_command = [
@@ -384,7 +382,74 @@ def coverage(path: Path):
     print(f"HTML coverage report generated")
 
 
-def run(code: Code, model: str):
+# def run_coverage(path: Path, model: str):
+#     print("\n📊 Generating individual coverage reports for each executable...")
+#     path.mkdir(exist_ok=True)
+
+#     args_list = []
+#     for cpp_file in path.parent.rglob(f"*{model}*.cpp"):
+#         cpp_file = cpp_file.resolve()
+#         json_output = path / f'{cpp_file.stem}.json'
+#         args_list.append((cpp_file, json_output))
+
+#     # with Pool(32) as pool:
+#     #     pool.map(coverage_wrapper, args_list)
+#     for args in args_list:
+#         coverage_wrapper(args)
+
+
+# def coverage_wrapper(args):
+#     coverage(*args)
+
+
+# def coverage(cpp_file: Path, json_output: Path):
+#     if json_output.exists():
+#         return
+#     escaped_path = re.sub(r'\+', r'\\+', str(cpp_file))  # Escape only + and .
+#     cmd = [
+#         "gcovr",
+#         "-r", ".",
+#         "--filter", f'"{escaped_path}"',
+#         "--json",
+#         "--output", str(json_output)
+#     ]
+#     print(f"Generating JSON coverage report for: {cpp_file.name}, \ncmd: {' '.join(cmd)}")
+#     subprocess.run(cmd)
+
+# def merge_coverage_results(path: Path):
+#     import csv
+#     # Collect all gcovr JSON files
+#     json_files = list(path.rglob("*.json"))
+#     summary_rows = []
+
+#     for json_path in json_files:
+#         with open(json_path) as f:
+#             data = json.load(f)
+
+#         files = data.get('files', [])
+#         for file in files:
+#             # Extract summary info from gcovr's JSON structure
+#             file_coverage = {
+#                 "filename": file['file'],
+#                 "lines_total": data.get("line_coverage", {}).get("count", 0),
+#                 "lines_covered": data.get("line_coverage", {}).get("covered", 0),
+#                 "lines_percent": data.get("line_coverage", {}).get("percent", 0.0),
+#                 "branches_total": data.get("branch_coverage", {}).get("count", 0),
+#                 "branches_covered": data.get("branch_coverage", {}).get("covered", 0),
+#                 "branches_percent": data.get("branch_coverage", {}).get("percent", 0.0),
+#             }
+#             summary_rows.append(file_coverage)
+
+#     # Write to a CSV summary
+#     summary_path = path / "00_coverage_summary.csv"
+#     with open(summary_path, "w", newline="") as f:
+#         writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
+#         writer.writeheader()
+#         writer.writerows(summary_rows)
+
+#     print(f"✅ Summary saved to {str(summary_path)}")
+
+def run_generate_cases(code: Code, model: str):
     gen_code_dir = Path(f'thesis_dataset/generated/{code.lang}')
     prompt = get_llm_prompt_unit_test_generation(code.desc, code.src)
     # print(prompt)
@@ -399,10 +464,8 @@ def run(code: Code, model: str):
     else:
         print(f"Existed raw file {code.src_path} -> {str(gen_filepath)}")
 
-def run_wrapper(args):
-    code, model = args
-    run(code, model)
-
+def run_generate_cases_wrapper(args):
+    run_generate_cases(*args)
 
 def main(args):
     codes = get_codes()
@@ -413,9 +476,11 @@ def main(args):
     # model requests
     # for idx, code in enumerate(codes):
     #     run(code, args.model_name)
-    # with Pool(32) as pool:
-    #     pool.map(run_wrapper, [(code, args.model_name) for code in codes])
-    # pool.join()
+
+    codes = codes[:50]
+    with Pool(8) as pool:
+        pool.map(run_generate_cases_wrapper, [(code, args.model_name) for code in codes])
+    pool.join()
 
     for idx, code in enumerate(codes):
         gen_filename = code.gen_filename(args.model_name)
@@ -431,19 +496,26 @@ def main(args):
         unprocessed_code = extract_code_in_backticks(unprocessed_code)
         if unprocessed_code is None:
             continue
+
         tests = extract_tests(unprocessed_code)
         gen_full_code = assemble(code.src, tests)
         with open(f'{gen_filepath}.cpp', 'w') as fd:
             fd.write(gen_full_code)
 
-    # compile_cpp_and_run_wrapper(gen_code_dir)
-    coverage(gen_code_dir / f'coverage-{args.model_name}')
+    compile_cpp_and_run_wrapper(gen_code_dir)
+
+    if args.cov:
+        # coverage_dir = gen_code_dir / f'coverage-{args.model_name}'
+        coverage_dir = gen_code_dir / 'coverage'
+        run_coverage(coverage_dir, args.model_name)
+        # merge_coverage_results(coverage_dir)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--lang", type=str, default="C++")
     parser.add_argument("--model_name", type=str, default="gpt-4o")
+    parser.add_argument("--cov", action="store_true")
     args = parser.parse_args()
 
     main(args)
